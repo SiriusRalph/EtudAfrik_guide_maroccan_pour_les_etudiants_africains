@@ -16,6 +16,8 @@ const questions = [
   { id: "priority", question: "Qu'est-ce qui compte le plus ?", options: ["Qualité de l'enseignement", "Opportunités de stage", "Vie étudiante", "Réputation de l'école", "Coût abordable"] },
 ];
 
+const STORAGE_KEY = "etudafrik_quiz_answers";
+
 const Recommendation = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -32,35 +34,78 @@ const Recommendation = () => {
   const isComplete = step >= questions.length;
   const progress = ((step + (answers[currentQ?.id] ? 1 : 0)) / questions.length) * 100;
 
-  // Load user credits
+  // ── Load credits ───────────────────────────────────────────────────────────
+  const loadCredits = async () => {
+    if (!user) { setLoadingCredits(false); return; }
+    const { data } = await supabase
+      .from("profiles")
+      .select("recommendation_credits")
+      .eq("user_id", user.id)
+      .single();
+    setCredits(data?.recommendation_credits ?? 0);
+    setLoadingCredits(false);
+  };
+
   useEffect(() => {
-    const loadCredits = async () => {
-      if (!user) { setLoadingCredits(false); return; }
-      const { data } = await supabase
-        .from("profiles")
-        .select("recommendation_credits")
-        .eq("user_id", user.id)
-        .single();
-      setCredits(data?.recommendation_credits ?? 0);
-      setLoadingCredits(false);
-    };
     loadCredits();
   }, [user]);
 
-  // Handle successful payment redirect
+  // ── Restore answers from sessionStorage after Stripe redirect ──────────────
   useEffect(() => {
-    if (searchParams.get("payment") === "success") {
-      toast.success("Paiement réussi ! 3 crédits ajoutés à ton compte.");
-      if (user) {
-        supabase.from("profiles").select("recommendation_credits")
-          .eq("user_id", user.id).single()
-          .then(({ data }) => setCredits(data?.recommendation_credits ?? 0));
-      }
+    const saved = sessionStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setAnswers(parsed);
+        // Jump to last step so user can immediately get recommendations
+        setStep(questions.length);
+      } catch {}
     }
+  }, []);
+
+  // ── Handle Stripe payment redirect ─────────────────────────────────────────
+  useEffect(() => {
+    const payment = searchParams.get("payment");
+    if (!payment) return;
+
+    if (payment === "success") {
+      toast.success("Paiement réussi ! 3 crédits ajoutés à ton compte.");
+      // Poll credits for up to 10s (webhook may take a moment)
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        const { data } = await supabase
+          .from("profiles")
+          .select("recommendation_credits")
+          .eq("user_id", user!.id)
+          .single();
+        const newCredits = data?.recommendation_credits ?? 0;
+        if (newCredits > 0 || attempts >= 10) {
+          setCredits(newCredits);
+          clearInterval(poll);
+          if (newCredits > 0) {
+            toast.success(`${newCredits} crédit(s) disponible(s) !`);
+          }
+        }
+      }, 1000);
+    } else if (payment === "cancelled") {
+      toast.error("Paiement annulé.");
+    }
+
+    // Clean URL
+    window.history.replaceState({}, "", "/recommendation");
   }, [searchParams]);
 
+  // ── Save answers to sessionStorage whenever they change ───────────────────
+  useEffect(() => {
+    if (Object.keys(answers).length > 0) {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(answers));
+    }
+  }, [answers]);
+
   const selectAnswer = (answer: string) => {
-    setAnswers({ ...answers, [currentQ.id]: answer });
+    const newAnswers = { ...answers, [currentQ.id]: answer };
+    setAnswers(newAnswers);
     if (step < questions.length - 1) {
       setTimeout(() => setStep(step + 1), 300);
     }
@@ -69,6 +114,8 @@ const Recommendation = () => {
   const handlePayment = async () => {
     if (!user) { toast.error("Connectez-vous d'abord"); return; }
     setPaymentLoading(true);
+    // Save answers before leaving page
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(answers));
     try {
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-payment`, {
         method: "POST",
@@ -90,7 +137,6 @@ const Recommendation = () => {
       }
     } catch (e: any) {
       toast.error(e.message || "Erreur lors du paiement");
-    } finally {
       setPaymentLoading(false);
     }
   };
@@ -104,12 +150,13 @@ const Recommendation = () => {
 
     setLoading(true);
     try {
-      // Deduct 1 credit first
+      // Optimistic credit deduction
+      const prevCredits = credits ?? 1;
       await supabase
         .from("profiles")
-        .update({ recommendation_credits: (credits ?? 1) - 1 })
+        .update({ recommendation_credits: prevCredits - 1 })
         .eq("user_id", user.id);
-      setCredits((prev) => (prev ?? 1) - 1);
+      setCredits(prevCredits - 1);
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/recommend`, {
         method: "POST",
@@ -119,26 +166,39 @@ const Recommendation = () => {
         },
         body: JSON.stringify({ answers, userId: user?.id }),
       });
+
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData.error || "Erreur");
+        throw new Error(errData.error || "Erreur serveur");
       }
+
       const data = await resp.json();
       setResults(data.recommendations || []);
+      // Clear saved answers once we have results
+      sessionStorage.removeItem(STORAGE_KEY);
+
     } catch (e: any) {
       toast.error(e.message || "Erreur lors de la recommandation");
       // Refund credit on error
+      const prevCredits = credits ?? 1;
       await supabase
         .from("profiles")
-        .update({ recommendation_credits: credits ?? 1 })
+        .update({ recommendation_credits: prevCredits })
         .eq("user_id", user.id);
-      setCredits(credits);
+      setCredits(prevCredits);
     } finally {
       setLoading(false);
     }
   };
 
-  // Results view
+  const resetQuiz = () => {
+    setResults(null);
+    setStep(0);
+    setAnswers({});
+    sessionStorage.removeItem(STORAGE_KEY);
+  };
+
+  // ── RESULTS VIEW ───────────────────────────────────────────────────────────
   if (results) {
     return (
       <div className="min-h-screen bg-background">
@@ -163,13 +223,14 @@ const Recommendation = () => {
           {results.length === 0 ? (
             <div className="text-center py-12 p-8 rounded-2xl bg-card border border-border">
               <p className="text-muted-foreground mb-4">Aucune école ne correspond exactement. Essaie d'élargir tes préférences.</p>
-              <Button onClick={() => { setResults(null); setStep(0); setAnswers({}); }} className="rounded-xl">Recommencer</Button>
+              <Button onClick={resetQuiz} className="rounded-xl">Recommencer</Button>
             </div>
           ) : (
             <div className="space-y-4">
               {results.map((r: any, i: number) => (
                 <motion.div key={r.school_id || i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-                  <Link to={r.slug ? `/school/${r.slug}` : "#"} className="block p-5 rounded-2xl bg-card border border-border shadow-card hover:shadow-card-hover transition-all group">
+                  <Link to={r.slug ? `/schools/${r.slug}` : "#"}
+                    className="block p-5 rounded-2xl bg-card border border-border shadow-card hover:shadow-card-hover transition-all group">
                     <div className="flex items-start justify-between mb-3">
                       <div>
                         <span className="text-xs text-muted-foreground font-medium">#{i + 1}</span>
@@ -181,7 +242,7 @@ const Recommendation = () => {
                           )}
                         </div>
                       </div>
-                      <div className="px-3 py-1.5 rounded-xl bg-hero-gradient text-primary-foreground text-sm font-bold shadow-warm">
+                      <div className="px-3 py-1.5 rounded-xl bg-hero-gradient text-primary-foreground text-sm font-bold shadow-warm flex-shrink-0">
                         {r.match_score}%
                       </div>
                     </div>
@@ -201,13 +262,14 @@ const Recommendation = () => {
           )}
 
           <div className="text-center mt-8 space-y-3">
-            <Button onClick={() => { setResults(null); setStep(0); setAnswers({}); }} variant="outline" className="rounded-xl">
+            <Button onClick={resetQuiz} variant="outline" className="rounded-xl">
               Refaire le questionnaire
             </Button>
             {credits !== null && credits <= 0 && (
               <div>
                 <p className="text-sm text-muted-foreground mb-2">Tu n'as plus de crédits</p>
-                <Button onClick={handlePayment} disabled={paymentLoading} className="rounded-xl bg-hero-gradient text-primary-foreground gap-2">
+                <Button onClick={handlePayment} disabled={paymentLoading}
+                  className="rounded-xl bg-hero-gradient text-primary-foreground gap-2">
                   {paymentLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
                   Acheter 3 crédits — 50 MAD
                 </Button>
@@ -219,7 +281,7 @@ const Recommendation = () => {
     );
   }
 
-  // Questionnaire view
+  // ── QUESTIONNAIRE VIEW ─────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="sticky top-0 z-50 glass border-b border-border/50">
@@ -230,11 +292,13 @@ const Recommendation = () => {
           <h1 className="font-semibold text-foreground text-sm">Recommandation IA</h1>
           <div className="ml-auto flex items-center gap-3">
             {!loadingCredits && credits !== null && (
-              <span className="text-xs text-muted-foreground font-medium">
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${credits > 0 ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
                 {credits} crédit(s)
               </span>
             )}
-            <span className="text-xs text-muted-foreground font-medium">{Math.min(step + 1, questions.length)}/{questions.length}</span>
+            <span className="text-xs text-muted-foreground font-medium">
+              {Math.min(step + 1, questions.length)}/{questions.length}
+            </span>
           </div>
         </div>
         <div className="h-0.5 bg-muted">
@@ -255,15 +319,12 @@ const Recommendation = () => {
                 </div>
                 <div className="space-y-2.5">
                   {currentQ.options.map((opt) => (
-                    <button
-                      key={opt}
-                      onClick={() => selectAnswer(opt)}
+                    <button key={opt} onClick={() => selectAnswer(opt)}
                       className={`w-full p-4 rounded-xl border text-left transition-all duration-200 ${
                         answers[currentQ.id] === opt
                           ? "border-primary bg-primary/5 text-foreground font-medium ring-1 ring-primary"
                           : "border-border bg-card text-foreground hover:border-primary/40 shadow-card"
-                      }`}
-                    >
+                      }`}>
                       <div className="flex items-center justify-between">
                         <span className="text-sm">{opt}</span>
                         {answers[currentQ.id] === opt && <Check className="w-4 h-4 text-primary" />}
@@ -273,7 +334,9 @@ const Recommendation = () => {
                 </div>
                 <div className="flex items-center justify-between mt-6">
                   {step > 0 ? (
-                    <Button variant="ghost" onClick={() => setStep(step - 1)} className="rounded-xl text-sm"><ArrowLeft className="w-4 h-4 mr-1" /> Précédent</Button>
+                    <Button variant="ghost" onClick={() => setStep(step - 1)} className="rounded-xl text-sm">
+                      <ArrowLeft className="w-4 h-4 mr-1" /> Précédent
+                    </Button>
                   ) : <div />}
                   {step === questions.length - 1 && answers[currentQ.id] && (
                     <Button onClick={() => setStep(questions.length)} className="rounded-xl bg-foreground text-background hover:bg-foreground/90 gap-1">
@@ -292,7 +355,6 @@ const Recommendation = () => {
                   Notre IA va analyser tes réponses et te recommander les meilleures écoles.
                 </p>
 
-                {/* Credits info */}
                 {!loadingCredits && (
                   <div className="mb-6">
                     {credits !== null && credits > 0 ? (
@@ -308,11 +370,8 @@ const Recommendation = () => {
                         <p className="text-muted-foreground text-sm mb-4">
                           Achète 3 crédits pour obtenir tes recommandations personnalisées.
                         </p>
-                        <Button
-                          onClick={handlePayment}
-                          disabled={paymentLoading}
-                          className="w-full rounded-xl bg-hero-gradient text-primary-foreground gap-2"
-                        >
+                        <Button onClick={handlePayment} disabled={paymentLoading}
+                          className="w-full rounded-xl bg-hero-gradient text-primary-foreground gap-2">
                           {paymentLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
                           Acheter 3 crédits — 50 MAD
                         </Button>
@@ -322,7 +381,8 @@ const Recommendation = () => {
                 )}
 
                 {credits !== null && credits > 0 && (
-                  <Button onClick={getRecommendations} disabled={loading} className="bg-hero-gradient text-primary-foreground shadow-warm rounded-xl gap-2 text-sm px-8 h-12">
+                  <Button onClick={getRecommendations} disabled={loading}
+                    className="bg-hero-gradient text-primary-foreground shadow-warm rounded-xl gap-2 text-sm px-8 h-12">
                     {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Brain className="w-5 h-5" />}
                     {loading ? "Analyse en cours..." : "Obtenir mes recommandations"}
                   </Button>

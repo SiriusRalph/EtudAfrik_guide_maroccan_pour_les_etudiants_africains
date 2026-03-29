@@ -1,120 +1,144 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+// ⚠️  Set STRIPE_WEBHOOK_SECRET in your Supabase Edge Function secrets
+// Get it from: Stripe Dashboard → Webhooks → your endpoint → Signing secret
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
   try {
-    const { answers, userId } = await req.json();
-
-    const GROK_API_KEY = Deno.env.get("GROK_API_KEY");
-    if (!GROK_API_KEY) throw new Error("GROK_API_KEY is not configured");
-
+    const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY");
+    const STRIPE_WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    if (!STRIPE_SECRET_KEY || !STRIPE_WEBHOOK_SECRET) {
+      throw new Error("Missing Stripe env vars");
+    }
+
     const supabase = createClient(supabaseUrl, supabaseKey);
+    const body = await req.text();
+    const signature = req.headers.get("stripe-signature");
 
-    // Fetch top 10 schools only to stay within token limits
-    const { data: schools } = await supabase
-      .from("schools")
-      .select("*, programs(*)")
-      .order("satisfaction_score", { ascending: false })
-      .limit(10);
-
-    if (!schools || schools.length === 0) {
-      return new Response(JSON.stringify({ recommendations: [] }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!signature) {
+      return new Response("Missing stripe-signature", { status: 400 });
     }
 
-    const prompt = `Tu es un système de recommandation d'écoles marocaines.
-Analyse les préférences de l'étudiant et les écoles disponibles, puis retourne les 5 meilleures écoles.
-
-Préférences de l'étudiant:
-${JSON.stringify(answers, null, 2)}
-
-Écoles disponibles:
-${JSON.stringify(schools.map(s => ({
-  id: s.id,
-  name: s.name,
-  slug: s.slug,
-  city: s.city,
-  satisfaction_score: s.satisfaction_score,
-  programs: s.programs?.slice(0, 3).map((p: any) => ({ domain: p.domain, level: p.level, language: p.language }))
-})), null, 2)}
-
-Réponds UNIQUEMENT en JSON valide sans texte avant ou après, dans ce format exact:
-{
-  "recommendations": [
-    {
-      "school_id": "id de l'école",
-      "name": "Nom de l'école",
-      "slug": "slug",
-      "city": "Ville",
-      "satisfaction_score": 4.5,
-      "match_score": 92,
-      "reasons": ["Raison 1", "Raison 2", "Raison 3"]
+    // Verify webhook signature using Stripe's algorithm
+    const isValid = await verifyStripeSignature(body, signature, STRIPE_WEBHOOK_SECRET);
+    if (!isValid) {
+      console.error("Invalid Stripe webhook signature");
+      return new Response("Invalid signature", { status: 400 });
     }
-  ]
-}`;
 
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${GROK_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: "Tu es un système de recommandation d'écoles. Réponds UNIQUEMENT en JSON valide, sans texte avant ou après." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.7,
-      }),
-    });
+    const event = JSON.parse(body);
+    console.log("Stripe event:", event.type);
 
-    const groqData = await response.json();
-    console.log("Groq raw response:", JSON.stringify(groqData));
+    // Only handle successful payments
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
 
-    const text = groqData.choices?.[0]?.message?.content || "";
-    if (!text) throw new Error("Grok returned empty: " + JSON.stringify(groqData));
-
-    const clean = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
-    const recommendations = parsed.recommendations || [];
-
-    // Save recommendations if user is logged in
-    if (userId && recommendations.length > 0) {
-      for (const rec of recommendations) {
-        if (rec.school_id) {
-          try {
-            await supabase.from("ai_recommendations").insert({
-              user_id: userId,
-              school_id: rec.school_id,
-              match_score: rec.match_score,
-              reasons: rec.reasons,
-              questionnaire_answers: answers,
-            });
-          } catch { /* Ignore duplicates */ }
-        }
+      // Only process if payment was actually paid
+      if (session.payment_status !== "paid") {
+        return new Response("Not paid yet", { status: 200 });
       }
+
+      const userId = session.metadata?.user_id;
+      const creditsToAdd = parseInt(session.metadata?.credits || "3");
+
+      if (!userId) {
+        console.error("No user_id in session metadata");
+        return new Response("No user_id", { status: 400 });
+      }
+
+      console.log(`Adding ${creditsToAdd} credits to user ${userId}`);
+
+      // Get current credits
+      const { data: profile, error: fetchError } = await supabase
+        .from("profiles")
+        .select("recommendation_credits")
+        .eq("user_id", userId)
+        .single();
+
+      if (fetchError) {
+        console.error("Error fetching profile:", fetchError);
+        return new Response("Profile not found", { status: 400 });
+      }
+
+      const currentCredits = profile?.recommendation_credits ?? 0;
+      const newCredits = currentCredits + creditsToAdd;
+
+      // Update credits
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ recommendation_credits: newCredits })
+        .eq("user_id", userId);
+
+      if (updateError) {
+        console.error("Error updating credits:", updateError);
+        return new Response("Failed to update credits", { status: 500 });
+      }
+
+      console.log(`✅ User ${userId} now has ${newCredits} credits`);
+
+      // Log the payment for records
+      await supabase.from("payment_logs").insert({
+        user_id: userId,
+        stripe_session_id: session.id,
+        amount_cents: session.amount_total,
+        currency: session.currency,
+        credits_added: creditsToAdd,
+        status: "completed",
+      }).select(); // ignore error if table doesn't exist yet
     }
 
-    return new Response(JSON.stringify({ recommendations }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
     });
 
   } catch (e) {
-    console.error("recommend error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Erreur inconnue" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    console.error("Webhook error:", e);
+    return new Response(
+      JSON.stringify({ error: e instanceof Error ? e.message : "Erreur" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 });
+
+// Verify Stripe webhook signature (HMAC-SHA256)
+async function verifyStripeSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    const parts = signature.split(",");
+    const timestamp = parts.find((p) => p.startsWith("t="))?.slice(2);
+    const expectedSig = parts.find((p) => p.startsWith("v1="))?.slice(3);
+
+    if (!timestamp || !expectedSig) return false;
+
+    const signedPayload = `${timestamp}.${payload}`;
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+
+    const sigBuffer = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(signedPayload)
+    );
+
+    const computedSig = Array.from(new Uint8Array(sigBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    return computedSig === expectedSig;
+  } catch {
+    return false;
+  }
+}
