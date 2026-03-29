@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { MapPin, Star, ArrowRight, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
 
 const schools = [
   { name: "Sup de Co Marrakech", city: "Marrakech", domain: "Ingénierie/Commerce", rating: 4.7, students: 1000, tuition: "45 000 MAD/an" },
@@ -20,9 +21,11 @@ const SchoolsPreviewSection = () => {
               Écoles <span className="text-gradient">populaires</span>
             </h2>
           </div>
-          <Button variant="ghost" className="text-primary hover:text-primary/80 gap-2 self-start md:self-auto">
-            Voir toutes les écoles <ArrowRight className="w-4 h-4" />
-          </Button>
+          <Link to="/auth">
+            <Button variant="ghost" className="text-primary hover:text-primary/80 gap-2 self-start md:self-auto">
+              Voir toutes les écoles <ArrowRight className="w-4 h-4" />
+            </Button>
+          </Link>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -33,27 +36,31 @@ const SchoolsPreviewSection = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.1, duration: 0.5 }}
-              className="group rounded-2xl border border-border bg-card overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300 cursor-pointer"
             >
-              <div className="h-32 bg-hero-gradient opacity-80 flex items-center justify-center">
-                <BookOpen className="w-10 h-10 text-primary-foreground/60" />
-              </div>
-              <div className="p-5">
-                <h3 className="font-bold text-foreground mb-1 group-hover:text-primary transition-colors">{s.name}</h3>
-                <div className="flex items-center gap-1 text-sm text-muted-foreground mb-3">
-                  <MapPin className="w-3.5 h-3.5" /> {s.city}
+              <Link
+                to="/auth"
+                className="group block rounded-2xl border border-border bg-card overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300"
+              >
+                <div className="h-32 bg-hero-gradient opacity-80 flex items-center justify-center">
+                  <BookOpen className="w-10 h-10 text-primary-foreground/60" />
                 </div>
-                <span className="inline-block px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-medium mb-3">
-                  {s.domain}
-                </span>
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-1">
-                    <Star className="w-4 h-4 text-accent fill-accent" />
-                    <span className="font-semibold text-foreground">{s.rating}</span>
+                <div className="p-5">
+                  <h3 className="font-bold text-foreground mb-1 group-hover:text-primary transition-colors">{s.name}</h3>
+                  <div className="flex items-center gap-1 text-sm text-muted-foreground mb-3">
+                    <MapPin className="w-3.5 h-3.5" /> {s.city}
                   </div>
-                  <span className="text-muted-foreground">{s.tuition}</span>
+                  <span className="inline-block px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-medium mb-3">
+                    {s.domain}
+                  </span>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-1">
+                      <Star className="w-4 h-4 text-accent fill-accent" />
+                      <span className="font-semibold text-foreground">{s.rating}</span>
+                    </div>
+                    <span className="text-muted-foreground">{s.tuition}</span>
+                  </div>
                 </div>
-              </div>
+              </Link>
             </motion.div>
           ))}
         </div>
