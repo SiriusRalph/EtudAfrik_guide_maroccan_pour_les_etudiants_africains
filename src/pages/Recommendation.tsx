@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 const questions = [
-  { id: "field", question: "Quel domaine d'études t'intéresse ?", options: ["Informatique & IA", "Commerce & Management", "Ingénierie", "Médecine & Santé", "Droit", "Design & Architecture", "Sciences", "Communication"] },
+  { id: "field", question: "Quel domaine d'études t'intéresse ?", options: ["Informatique & Réseaux", "Data Science & IA", "Management & Gestion", "Finance & Audit", "Marketing & Communication", "Génie Civil & BTP", "Génie Industriel", "Droit", "Architecture & Urbanisme", "Énergie & Environnement"] },
   { id: "level", question: "Quel niveau d'études recherches-tu ?", options: ["Licence (Bac+3)", "Master (Bac+5)", "Doctorat", "Formation professionnelle"] },
   { id: "city", question: "Quelle ville préfères-tu ?", options: ["Casablanca", "Rabat", "Marrakech", "Fès", "Tanger", "Agadir", "Pas de préférence"] },
   { id: "budget", question: "Quel est ton budget annuel (MAD) ?", options: ["Moins de 30 000", "30 000 - 50 000", "50 000 - 80 000", "Plus de 80 000"] },
