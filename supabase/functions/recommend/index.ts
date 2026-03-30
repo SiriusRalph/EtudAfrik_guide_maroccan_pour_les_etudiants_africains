@@ -56,36 +56,40 @@ serve(async (req) => {
       });
     }
 
-    // ── STEP 3: Hard budget filter — keep schools that have AT LEAST ONE
-    //           program within the student's budget range ───────────────────
+    // ── STEP 3: Filter by budget AND domain ────────────────────────────────
     const schoolsInBudget = allSchools
       .map((school: any) => {
+        // Programs within budget
         const matchingPrograms = (school.programs || []).filter((p: any) => {
-          if (p.tuition_yearly === null || p.tuition_yearly === undefined) return true; // no tuition = include
+          if (p.tuition_yearly === null || p.tuition_yearly === undefined) return true;
           return p.tuition_yearly >= budget.min && p.tuition_yearly <= budget.max;
         });
 
-        // Also filter by field/domain if specified
+        // Programs matching domain exactly
         const fieldPrograms = preferredField
-  ? matchingPrograms.filter((p: any) =>
-      p.domain === preferredField
-    )
-  : matchingPrograms;
+          ? matchingPrograms.filter((p: any) => p.domain === preferredField)
+          : matchingPrograms;
 
         return {
           ...school,
-          // Prioritize field-matching programs, fallback to budget-matching ones
           relevantPrograms: fieldPrograms.length > 0 ? fieldPrograms : matchingPrograms,
           allMatchingPrograms: matchingPrograms,
+          hasFieldMatch: fieldPrograms.length > 0,
         };
       })
-      .filter((s: any) => s.allMatchingPrograms.length > 0) // must have at least 1 program in budget
-      .slice(0, 15); // cap at 15 for AI context
+      .filter((s: any) => s.allMatchingPrograms.length > 0)
+      .sort((a: any, b: any) => {
+        // Prioritize schools with matching domain first
+        if (a.hasFieldMatch && !b.hasFieldMatch) return -1;
+        if (!a.hasFieldMatch && b.hasFieldMatch) return 1;
+        return (b.satisfaction_score || 0) - (a.satisfaction_score || 0);
+      })
+      .slice(0, 15);
 
-    // If city filter + budget filter leaves nothing, relax city filter
+    // If city + budget filter leaves nothing, relax city filter
     const schoolsForAI = schoolsInBudget.length > 0 ? schoolsInBudget : allSchools.slice(0, 10);
 
-    // ── STEP 4: Build AI prompt with full tuition data ──────────────────────
+    // ── STEP 4: Build AI prompt ─────────────────────────────────────────────
     const schoolsForPrompt = schoolsForAI.map((s: any) => ({
       id: s.id,
       name: s.name,
@@ -93,6 +97,7 @@ serve(async (req) => {
       city: s.city,
       category: s.category,
       satisfaction_score: s.satisfaction_score,
+      has_matching_domain: s.hasFieldMatch,
       programs: (s.relevantPrograms || s.programs || []).slice(0, 4).map((p: any) => ({
         name: p.name,
         domain: p.domain,
@@ -112,12 +117,15 @@ Préférences de l'étudiant:
 - Langue d'enseignement: ${answers.language || "Non spécifié"}
 - Priorité: ${answers.priority || "Non spécifié"}
 
-RÈGLE ABSOLUE: Ne recommande JAMAIS une école dont TOUS les programmes dépassent ${budget.max === 999999 ? "le budget" : budget.max.toLocaleString() + " MAD/an"}.
+RÈGLES ABSOLUES:
+1. Ne recommande JAMAIS une école dont TOUS les programmes dépassent ${budget.max === 999999 ? "le budget" : budget.max.toLocaleString() + " MAD/an"}.
+2. Privilégie TOUJOURS les écoles avec has_matching_domain = true (elles ont le bon domaine).
+3. Si has_matching_domain = false, ne recommande cette école QUE s'il n'y a pas assez d'écoles avec le bon domaine.
 
-Écoles disponibles (déjà filtrées par budget et ville):
+Écoles disponibles (triées par correspondance domaine puis satisfaction):
 ${JSON.stringify(schoolsForPrompt, null, 2)}
 
-Sélectionne les 5 meilleures écoles et explique pourquoi chacune correspond au profil.
+Sélectionne les 5 meilleures écoles. Donne la priorité aux écoles qui correspondent au domaine "${answers.field}".
 Mentionne toujours le programme et son coût dans les raisons.
 
 Réponds UNIQUEMENT en JSON valide sans texte avant ou après:
@@ -131,7 +139,7 @@ Réponds UNIQUEMENT en JSON valide sans texte avant ou après:
       "satisfaction_score": 4.5,
       "match_score": 92,
       "reasons": [
-        "Programme X à Y MAD/an correspond à ton budget",
+        "Programme X en ${answers.field} à Y MAD/an correspond à ton budget",
         "Raison 2",
         "Raison 3"
       ]
@@ -155,7 +163,7 @@ Réponds UNIQUEMENT en JSON valide sans texte avant ou après:
           },
           { role: "user", content: prompt }
         ],
-        temperature: 0.3, // lower = more deterministic, better for structured output
+        temperature: 0.3,
       }),
     });
 
@@ -171,13 +179,11 @@ Réponds UNIQUEMENT en JSON valide sans texte avant ou après:
     const recommendations = parsed.recommendations || [];
 
     // ── STEP 7: Post-process — enforce budget as final safety check ─────────
-    // Re-attach real school data and verify budget compliance
     const safeRecommendations = recommendations
       .map((rec: any) => {
         const school = allSchools.find((s: any) => s.id === rec.school_id || s.name === rec.name);
         if (!school) return rec;
 
-        // Check if school has any program in budget
         const hasAffordableProgram = (school.programs || []).some((p: any) =>
           p.tuition_yearly === null ||
           p.tuition_yearly === undefined ||
@@ -191,7 +197,7 @@ Réponds UNIQUEMENT en JSON valide sans texte avant ou après:
 
         return {
           ...rec,
-          school_id: school.id, // ensure correct ID
+          school_id: school.id,
           slug: school.slug,
           satisfaction_score: school.satisfaction_score,
         };
