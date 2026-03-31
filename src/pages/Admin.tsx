@@ -131,10 +131,20 @@ const Admin = () => {
 };
 
   const updateEnrollmentStatus = async (id: string, status: string) => {
-    await supabase.from("enrollments").update({ status }).eq("id", id);
-    toast.success(`Inscription ${status === "confirmed" ? "confirmée" : "rejetée"}`);
-    loadEnrollments();
-  };
+  const { error } = await supabase
+    .from("enrollments")
+    .update({ status })
+    .eq("id", id);
+
+  if (error) {
+    console.error("Update error:", error);
+    toast.error("Erreur lors de la mise à jour: " + error.message);
+    return;
+  }
+
+  toast.success(`Inscription ${status === "confirmed" ? "confirmée" : "rejetée"}`);
+  loadEnrollments();
+};
 
   const deleteReview = async (id: string) => {
     await supabase.from("reviews").delete().eq("id", id);
