@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, MapPin, Star, Globe, Phone, Mail, Heart, BookOpen, Users,
+  ArrowLeft, MapPin, Star, Globe, Globe2, Phone, Mail, Heart, BookOpen, Users,
   Calendar, Shield, Send, Loader2, Award, Building2, Wifi, Coffee,
   GraduationCap, Sparkles, BarChart3, ThumbsUp, ThumbsDown, TrendingUp, CheckCircle
 } from "lucide-react";
@@ -37,8 +37,8 @@ const SchoolDetail = () => {
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [analyzingReviews, setAnalyzingReviews] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "programs" | "reviews">("overview");
-  // ✅ CHANGE 1: new state for sibling campuses
   const [siblingCampuses, setSiblingCampuses] = useState<any[]>([]);
+  const [partnerships, setPartnerships] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchSchool = async () => {
@@ -47,7 +47,6 @@ const SchoolDetail = () => {
       if (!schoolData) { setLoading(false); return; }
       setSchool(schoolData);
 
-      // ✅ CHANGE 2: fetch sibling campuses if this school belongs to a group
       if (schoolData.group_id) {
         const { data: campuses } = await supabase
           .from("schools")
@@ -57,6 +56,14 @@ const SchoolDetail = () => {
           .order("city");
         setSiblingCampuses(campuses || []);
       }
+
+      // Fetch partnerships
+      const { data: partnershipsData } = await supabase
+        .from("partnerships")
+        .select("*")
+        .eq("school_id", schoolData.id)
+        .order("partner_type");
+      setPartnerships(partnershipsData || []);
 
       const [programsRes, reviewsRes] = await Promise.all([
         supabase.from("programs").select("*").eq("school_id", schoolData.id).eq("is_active", true),
@@ -95,7 +102,6 @@ const SchoolDetail = () => {
           .maybeSingle();
         setExistingEnrollment(enrollData);
       }
- 
     };
     fetchSchool();
   }, [slug, user]);
@@ -139,29 +145,29 @@ const SchoolDetail = () => {
   };
 
   const declareEnrollment = async (programId?: string) => {
-  if (!user) { toast.error("Connectez-vous pour déclarer une inscription"); return; }
-  setEnrolling(true);
-  const { data, error } = await supabase
-    .from("enrollments")
-    .insert({
-      student_id: user.id,
-      school_id: school.id,
-      program_id: programId || null,
-      academic_year: "2025-2026",
-      status: "pending",
-    })
-    .select()
-    .single();
- 
-  if (error) {
-    if (error.code === "23505") toast.error("Vous avez déjà une inscription dans cette école.");
-    else toast.error(error.message);
-  } else {
-    setExistingEnrollment(data);
-    toast.success("Inscription déclarée ! Rendez-vous dans votre dashboard pour la confirmer.");
-  }
-  setEnrolling(false);
-};
+    if (!user) { toast.error("Connectez-vous pour déclarer une inscription"); return; }
+    setEnrolling(true);
+    const { data, error } = await supabase
+      .from("enrollments")
+      .insert({
+        student_id: user.id,
+        school_id: school.id,
+        program_id: programId || null,
+        academic_year: "2025-2026",
+        status: "pending",
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === "23505") toast.error("Vous avez déjà une inscription dans cette école.");
+      else toast.error(error.message);
+    } else {
+      setExistingEnrollment(data);
+      toast.success("Inscription déclarée ! Rendez-vous dans votre dashboard pour la confirmer.");
+    }
+    setEnrolling(false);
+  };
 
   const submitReview = async () => {
     if (!user) { toast.error("Connectez-vous pour laisser un avis"); return; }
@@ -263,17 +269,23 @@ const SchoolDetail = () => {
     </div>
   );
 
+  const partnershipColor = (type: string) => {
+    switch (type) {
+      case "Double diplôme": return "bg-green-100 text-green-700";
+      case "Accréditation": return "bg-blue-100 text-blue-700";
+      case "Recherche": return "bg-purple-100 text-purple-700";
+      case "Industrie": return "bg-orange-100 text-orange-700";
+      case "Réseau": return "bg-yellow-100 text-yellow-700";
+      default: return "bg-muted text-muted-foreground";
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Banner */}
       <div className="relative h-56 md:h-72 overflow-hidden">
-        {/* Cover image — falls back to gradient if no cover_url */}
         {school.cover_url ? (
-          <img
-            src={school.cover_url}
-            alt={school.name}
-            className="absolute inset-0 w-full h-full object-cover"
-          />
+          <img src={school.cover_url} alt={school.name} className="absolute inset-0 w-full h-full object-cover" />
         ) : (
           <div className="absolute inset-0 bg-hero-gradient" />
         )}
@@ -285,12 +297,7 @@ const SchoolDetail = () => {
               <ArrowLeft className="w-5 h-5" />
             </Button>
           </Link>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="rounded-xl glass glass-border text-foreground hover:bg-card/90"
-            onClick={toggleSave}
-          >
+          <Button variant="ghost" size="icon" className="rounded-xl glass glass-border text-foreground hover:bg-card/90" onClick={toggleSave}>
             <Heart className={`w-5 h-5 ${isSaved ? "fill-destructive text-destructive" : ""}`} />
           </Button>
         </div>
@@ -359,40 +366,35 @@ const SchoolDetail = () => {
               </div>
             ))}
           </div>
+
           {/* Enrollment CTA */}
-{user && (
-  <div className="p-5 rounded-2xl bg-card border border-border shadow-card mt-4">
-    <h3 className="font-bold text-foreground mb-1 flex items-center gap-2">
-      <GraduationCap className="w-5 h-5 text-primary" />
-      Vous êtes inscrit(e) ici ?
-    </h3>
-    <p className="text-sm text-muted-foreground mb-4">
-      Déclarez votre inscription pour que EtudAfrik puisse la suivre.
-      Vous devrez ensuite la confirmer dans votre dashboard.
-    </p>
- 
-    {existingEnrollment ? (
-      <div className="flex items-center gap-2 text-sm">
-        <CheckCircle className="w-4 h-4 text-green-500" />
-        <span className="text-green-700 font-medium">Inscription déclarée</span>
-        <span className="text-muted-foreground">— Confirmez-la dans votre</span>
-        <Link to="/dashboard" className="text-primary font-medium hover:underline">dashboard</Link>
-      </div>
-    ) : (
-      <Button
-        onClick={() => declareEnrollment()}
-        disabled={enrolling}
-        className="rounded-xl gap-2 bg-hero-gradient text-primary-foreground"
-      >
-        {enrolling
-          ? <><Loader2 className="w-4 h-4 animate-spin" /> Déclaration...</>
-          : <><GraduationCap className="w-4 h-4" /> Déclarer mon inscription</>
-        }
-      </Button>
-    )}
-  </div>
-)}
- 
+          {user && (
+            <div className="p-5 rounded-2xl bg-card border border-border shadow-card mt-4">
+              <h3 className="font-bold text-foreground mb-1 flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-primary" />
+                Vous êtes inscrit(e) ici ?
+              </h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Déclarez votre inscription pour que EtudAfrik puisse la suivre.
+                Vous devrez ensuite la confirmer dans votre dashboard.
+              </p>
+              {existingEnrollment ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <CheckCircle className="w-4 h-4 text-green-500" />
+                  <span className="text-green-700 font-medium">Inscription déclarée</span>
+                  <span className="text-muted-foreground">— Confirmez-la dans votre</span>
+                  <Link to="/dashboard" className="text-primary font-medium hover:underline">dashboard</Link>
+                </div>
+              ) : (
+                <Button onClick={() => declareEnrollment()} disabled={enrolling} className="rounded-xl gap-2 bg-hero-gradient text-primary-foreground">
+                  {enrolling
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Déclaration...</>
+                    : <><GraduationCap className="w-4 h-4" /> Déclarer mon inscription</>
+                  }
+                </Button>
+              )}
+            </div>
+          )}
 
           {/* Contact */}
           <div className="flex flex-wrap gap-3 mt-5">
@@ -462,12 +464,7 @@ const SchoolDetail = () => {
                   <Sparkles className="w-5 h-5 text-primary" /> Analyse IA
                 </h2>
                 {reviews.length > 0 && (
-                  <Button
-                    onClick={analyzeReviews}
-                    disabled={analyzingReviews}
-                    variant="outline"
-                    className="rounded-xl gap-2 text-sm"
-                  >
+                  <Button onClick={analyzeReviews} disabled={analyzingReviews} variant="outline" className="rounded-xl gap-2 text-sm">
                     {analyzingReviews ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />}
                     {analyzingReviews ? "Analyse en cours..." : "Lancer l'analyse"}
                   </Button>
@@ -485,7 +482,6 @@ const SchoolDetail = () => {
                       <p className="text-muted-foreground text-sm mt-1">{aiAnalysis.summary}</p>
                     </div>
                   </div>
-
                   {aiAnalysis.details?.strengths && (
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="p-4 rounded-xl bg-success/5 border border-success/10">
@@ -514,7 +510,6 @@ const SchoolDetail = () => {
                       </div>
                     </div>
                   )}
-
                   {(aiAnalysis.details?.teaching_score || aiAnalysis.details?.facilities_score) && (
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                       {[
@@ -535,9 +530,7 @@ const SchoolDetail = () => {
               ) : reviews.length > 0 ? (
                 <div className="p-8 rounded-2xl border-2 border-dashed border-border text-center">
                   <Sparkles className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground text-sm">
-                    Cliquez sur "Lancer l'analyse" pour obtenir un résumé IA des avis étudiants.
-                  </p>
+                  <p className="text-muted-foreground text-sm">Cliquez sur "Lancer l'analyse" pour obtenir un résumé IA des avis étudiants.</p>
                 </div>
               ) : (
                 <div className="p-8 rounded-2xl border-2 border-dashed border-border text-center">
@@ -552,15 +545,42 @@ const SchoolDetail = () => {
                 <h2 className="text-xl font-bold text-foreground mb-4">Domaines d'études</h2>
                 <div className="flex flex-wrap gap-2">
                   {domains.map((d) => (
-                    <span key={d} className="px-4 py-2 rounded-xl bg-card border border-border text-sm font-medium text-foreground shadow-card">
-                      {d}
-                    </span>
+                    <span key={d} className="px-4 py-2 rounded-xl bg-card border border-border text-sm font-medium text-foreground shadow-card">{d}</span>
                   ))}
                 </div>
               </section>
             )}
 
-            {/* ✅ CHANGE 3: Other campuses section */}
+            {/* Partenariats internationaux */}
+            {partnerships.length > 0 && (
+              <section>
+                <h2 className="text-xl font-bold text-foreground mb-4 flex items-center gap-2">
+                  <Globe2 className="w-5 h-5 text-primary" />
+                  Partenariats internationaux ({partnerships.length})
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {partnerships.map((p) => (
+                    <div key={p.id} className="flex items-start gap-4 p-4 rounded-2xl bg-card border border-border shadow-card">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <Globe2 className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-foreground text-sm truncate">{p.partner_name}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{p.partner_country}</div>
+                        <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${partnershipColor(p.partner_type)}`}>
+                          {p.partner_type}
+                        </span>
+                        {p.description && (
+                          <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{p.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Autres campus */}
             {siblingCampuses.length > 0 && (
               <section>
                 <h2 className="text-xl font-bold text-foreground mb-4 flex items-center gap-2">
@@ -578,23 +598,11 @@ const SchoolDetail = () => {
                         <MapPin className="w-5 h-5 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-foreground text-sm group-hover:text-primary transition-colors truncate">
-                          {campus.city}
-                        </div>
-                        {campus.address && (
-                          <div className="text-xs text-muted-foreground truncate mt-0.5">
-                            {campus.address}
-                          </div>
-                        )}
-                        {campus.phone && (
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {campus.phone}
-                          </div>
-                        )}
+                        <div className="font-semibold text-foreground text-sm group-hover:text-primary transition-colors truncate">{campus.city}</div>
+                        {campus.address && <div className="text-xs text-muted-foreground truncate mt-0.5">{campus.address}</div>}
+                        {campus.phone && <div className="text-xs text-muted-foreground mt-0.5">{campus.phone}</div>}
                       </div>
-                      {campus.is_verified && (
-                        <Shield className="w-4 h-4 text-success flex-shrink-0" />
-                      )}
+                      {campus.is_verified && <Shield className="w-4 h-4 text-success flex-shrink-0" />}
                     </Link>
                   ))}
                 </div>
@@ -643,18 +651,6 @@ const SchoolDetail = () => {
                 ))}
               </div>
             )}
-            {user && (
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={() => declareEnrollment(p.id)}
-    className="mt-3 rounded-lg text-xs gap-1 w-full"
-    disabled={enrolling || !!existingEnrollment}
-  >
-    <GraduationCap className="w-3.5 h-3.5" />
-    {existingEnrollment ? "Déjà déclaré" : "Je m'inscris dans ce programme"}
-  </Button>
-)}
           </motion.div>
         )}
 
@@ -665,26 +661,22 @@ const SchoolDetail = () => {
                 <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
                   <Star className="w-5 h-5 text-accent" /> Laisser un avis
                 </h3>
-
                 <div className="mb-4">
                   <label className="text-sm font-medium text-foreground mb-2 block">Note globale</label>
                   <RatingStars value={rating} onChange={setRating} />
                 </div>
-
                 <Input
                   placeholder="Titre de votre avis (optionnel)"
                   value={reviewTitle}
                   onChange={(e) => setReviewTitle(e.target.value)}
                   className="rounded-xl mb-3"
                 />
-
                 <Textarea
                   placeholder="Partagez votre expérience en détail : qualité des cours, vie étudiante, infrastructures..."
                   value={reviewText}
                   onChange={(e) => setReviewText(e.target.value)}
                   className="rounded-xl mb-4 min-h-[100px]"
                 />
-
                 <div className="p-4 rounded-xl bg-muted/50 mb-4 space-y-1">
                   <p className="text-sm font-medium text-foreground mb-2">Notes détaillées (optionnel)</p>
                   <SubRating label="Qualité de l'enseignement" value={teachingQuality} onChange={setTeachingQuality} />
@@ -693,7 +685,6 @@ const SchoolDetail = () => {
                   <SubRating label="Opportunités de stage" value={internshipOpp} onChange={setInternshipOpp} />
                   <SubRating label="Rapport qualité-prix" value={valueForMoney} onChange={setValueForMoney} />
                 </div>
-
                 <Button onClick={submitReview} disabled={submitting || !reviewText.trim()} className="bg-hero-gradient text-primary-foreground rounded-xl gap-2">
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   Publier l'avis
