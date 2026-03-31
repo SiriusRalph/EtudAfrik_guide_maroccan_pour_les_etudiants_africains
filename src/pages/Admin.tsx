@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
-const ADMIN_PASSWORD = "admin1234"; // Change this!
+const ADMIN_PASSWORD = "admin1234";
 
 type Tab = "stats" | "enrollments" | "schools" | "reviews";
 
@@ -19,7 +19,6 @@ const Admin = () => {
   const [activeTab, setActiveTab] = useState<Tab>("stats");
   const [loading, setLoading] = useState(false);
 
-  // Data
   const [stats, setStats] = useState<any>(null);
   const [enrollments, setEnrollments] = useState<any[]>([]);
   const [schools, setSchools] = useState<any[]>([]);
@@ -52,40 +51,36 @@ const Admin = () => {
   };
 
   const loadEnrollments = async () => {
-  setLoading(true);
-  
-  // Fetch enrollments first
-  const { data: enrollmentsData, error } = await supabase
-    .from("enrollments")
-    .select("*, schools(name, city)")
-    .order("created_at", { ascending: false });
+    setLoading(true);
 
-  if (error) {
-    console.error("enrollments error:", error);
+    const { data: enrollmentsData, error } = await supabase
+      .from("enrollments")
+      .select("*, schools(name, city)")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("enrollments error:", error);
+      setLoading(false);
+      return;
+    }
+
+    const studentIds = [...new Set((enrollmentsData || []).map(e => e.student_id))];
+    const { data: profilesData } = await supabase
+      .from("profiles")
+      .select("user_id, full_name")
+      .in("user_id", studentIds);
+
+    const profileMap: Record<string, any> = {};
+    (profilesData || []).forEach(p => { profileMap[p.user_id] = p; });
+
+    const merged = (enrollmentsData || []).map(e => ({
+      ...e,
+      profiles: profileMap[e.student_id] || null,
+    }));
+
+    setEnrollments(merged);
     setLoading(false);
-    return;
-  }
-
-  // Fetch profiles separately
-  const studentIds = [...new Set((enrollmentsData || []).map(e => e.student_id))];
-  const { data: profilesData } = await supabase
-    .from("profiles")
-    .select("user_id, full_name")
-    .in("user_id", studentIds);
-
-  // Merge manually
-  const profileMap: Record<string, any> = {};
-  (profilesData || []).forEach(p => { profileMap[p.user_id] = p; });
-
-  const merged = (enrollmentsData || []).map(e => ({
-    ...e,
-    profiles: profileMap[e.student_id] || null,
-  }));
-
-  console.log("merged enrollments:", merged);
-  setEnrollments(merged);
-  setLoading(false);
-};
+  };
 
   const loadSchools = async () => {
     setLoading(true);
@@ -98,53 +93,52 @@ const Admin = () => {
   };
 
   const loadReviews = async () => {
-  setLoading(true);
+    setLoading(true);
 
-  const { data: reviewsData, error } = await supabase
-    .from("reviews")
-    .select("*, schools(name)")
-    .order("created_at", { ascending: false });
+    const { data: reviewsData, error } = await supabase
+      .from("reviews")
+      .select("*, schools(name)")
+      .order("created_at", { ascending: false });
 
-  if (error) {
-    console.error("reviews error:", error);
+    if (error) {
+      console.error("reviews error:", error);
+      setLoading(false);
+      return;
+    }
+
+    const userIds = [...new Set((reviewsData || []).map(r => r.user_id))];
+    const { data: profilesData } = await supabase
+      .from("profiles")
+      .select("user_id, full_name")
+      .in("user_id", userIds);
+
+    const profileMap: Record<string, any> = {};
+    (profilesData || []).forEach(p => { profileMap[p.user_id] = p; });
+
+    const merged = (reviewsData || []).map(r => ({
+      ...r,
+      profiles: profileMap[r.user_id] || null,
+    }));
+
+    setReviews(merged);
     setLoading(false);
-    return;
-  }
-
-  // Fetch profiles separately
-  const userIds = [...new Set((reviewsData || []).map(r => r.user_id))];
-  const { data: profilesData } = await supabase
-    .from("profiles")
-    .select("user_id, full_name")
-    .in("user_id", userIds);
-
-  const profileMap: Record<string, any> = {};
-  (profilesData || []).forEach(p => { profileMap[p.user_id] = p; });
-
-  const merged = (reviewsData || []).map(r => ({
-    ...r,
-    profiles: profileMap[r.user_id] || null,
-  }));
-
-  setReviews(merged);
-  setLoading(false);
-};
+  };
 
   const updateEnrollmentStatus = async (id: string, status: string) => {
-  const { error } = await supabase
-    .from("enrollments")
-    .update({ status })
-    .eq("id", id);
+    const { error } = await supabase
+      .from("enrollments")
+      .update({ status })
+      .eq("id", id);
 
-  if (error) {
-    console.error("Update error:", error);
-    toast.error("Erreur lors de la mise à jour: " + error.message);
-    return;
-  }
+    if (error) {
+      console.error("Update error:", error);
+      toast.error("Erreur lors de la mise à jour: " + error.message);
+      return;
+    }
 
-  toast.success(`Inscription ${status === "confirmed" ? "confirmée" : "rejetée"}`);
-  loadEnrollments();
-};
+    toast.success(`Inscription ${status === "school_confirmed" ? "confirmée" : "annulée"}`);
+    loadEnrollments();
+  };
 
   const deleteReview = async (id: string) => {
     await supabase.from("reviews").delete().eq("id", id);
@@ -166,7 +160,18 @@ const Admin = () => {
     if (activeTab === "reviews") loadReviews();
   }, [activeTab, authed]);
 
-  // Login screen
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "school_confirmed": return { label: "Confirmée", color: "text-green-600" };
+      case "cancelled": return { label: "Annulée", color: "text-red-500" };
+      case "completed": return { label: "Complétée", color: "text-blue-600" };
+      case "student_confirmed": return { label: "En attente confirmation école", color: "text-yellow-600" };
+      case "disputed": return { label: "Contestée", color: "text-orange-500" };
+      case "pending":
+      default: return { label: "En attente", color: "text-yellow-600" };
+    }
+  };
+
   if (!authed) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -283,42 +288,40 @@ const Admin = () => {
             {enrollments.length === 0 && (
               <p className="text-muted-foreground text-center py-12">Aucune inscription pour le moment.</p>
             )}
-            {enrollments.map((e) => (
-              <div key={e.id} className="p-5 rounded-2xl bg-card border border-border shadow-card flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                  <div className="font-semibold text-foreground">{e.profiles?.full_name || "Étudiant inconnu"}</div>
-                  <div className="text-sm text-muted-foreground">{e.schools?.name} — {e.schools?.city}</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {new Date(e.created_at).toLocaleDateString("fr-FR")} ·{" "}
-                    <span className={`font-medium ${
-                      e.status === "confirmed" ? "text-green-600" :
-                      e.status === "rejected" ? "text-red-500" : "text-yellow-600"
-                    }`}>
-                      {e.status === "confirmed" ? "Confirmée" : e.status === "rejected" ? "Rejetée" : "En attente"}
-                    </span>
+            {enrollments.map((e) => {
+              const { label, color } = getStatusLabel(e.status);
+              return (
+                <div key={e.id} className="p-5 rounded-2xl bg-card border border-border shadow-card flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <div className="font-semibold text-foreground">{e.profiles?.full_name || "Étudiant inconnu"}</div>
+                    <div className="text-sm text-muted-foreground">{e.schools?.name} — {e.schools?.city}</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {new Date(e.created_at).toLocaleDateString("fr-FR")} ·{" "}
+                      <span className={`font-medium ${color}`}>{label}</span>
+                    </div>
                   </div>
+                  {(e.status === "pending" || e.status === "student_confirmed") && (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => updateEnrollmentStatus(e.id, "school_confirmed")}
+                        className="rounded-xl gap-1 bg-green-500 hover:bg-green-600 text-white"
+                      >
+                        <CheckCircle className="w-4 h-4" /> Confirmer
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => updateEnrollmentStatus(e.id, "cancelled")}
+                        className="rounded-xl gap-1 text-red-500 border-red-200 hover:bg-red-50"
+                      >
+                        <XCircle className="w-4 h-4" /> Annuler
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                {e.status === "pending" && (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => updateEnrollmentStatus(e.id, "confirmed")}
-                      className="rounded-xl gap-1 bg-green-500 hover:bg-green-600 text-white"
-                    >
-                      <CheckCircle className="w-4 h-4" /> Confirmer
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => updateEnrollmentStatus(e.id, "rejected")}
-                      className="rounded-xl gap-1 text-red-500 border-red-200 hover:bg-red-50"
-                    >
-                      <XCircle className="w-4 h-4" /> Rejeter
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -347,7 +350,9 @@ const Admin = () => {
                     onClick={() => toggleSchoolVerified(s.id, s.is_verified)}
                     className={`rounded-xl gap-1 ${s.is_verified ? "text-red-500 border-red-200" : "text-green-600 border-green-200"}`}
                   >
-                    {s.is_verified ? <><XCircle className="w-4 h-4" /> Retirer vérification</> : <><CheckCircle className="w-4 h-4" /> Vérifier</>}
+                    {s.is_verified
+                      ? <><XCircle className="w-4 h-4" /> Retirer vérification</>
+                      : <><CheckCircle className="w-4 h-4" /> Vérifier</>}
                   </Button>
                 </div>
               </div>
