@@ -293,6 +293,48 @@ const Dashboard = () => {
                   </Link>
                 </motion.div>
               ))}
+
+              {/* Guide — unlocked only after student confirms enrollment */}
+              {(() => {
+                const hasConfirmed = myEnrollments.some(e =>
+                  ["student_confirmed", "school_confirmed", "completed"].includes(e.status)
+                );
+                return hasConfirmed ? (
+                  <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+                    <Link to="/guide"
+                      className="group flex items-center gap-4 p-5 rounded-2xl bg-card border border-green-200 shadow-card hover:shadow-card-hover transition-all duration-300 relative overflow-hidden">
+                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold">
+                        DÉBLOQUÉ 🔓
+                      </div>
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[hsl(145,60%,40%)] to-[hsl(165,65%,45%)] flex items-center justify-center flex-shrink-0">
+                        <BookOpen className="w-6 h-6 text-primary-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors">Guide de l'étudiant</h3>
+                        <p className="text-sm text-muted-foreground">Budget, logement, visa, conseils par ville</p>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
+                    </Link>
+                  </motion.div>
+                ) : (
+                  <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+                    <div className="flex items-center gap-4 p-5 rounded-2xl bg-muted/50 border border-border cursor-not-allowed opacity-70">
+                      <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center flex-shrink-0">
+                        <BookOpen className="w-6 h-6 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-muted-foreground flex items-center gap-2">
+                          Guide de l'étudiant
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-muted border border-border">🔒 Verrouillé</span>
+                        </h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Confirmez votre inscription dans une école pour débloquer
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })()}
             </div>
 
             {/* Profile completion nudge */}

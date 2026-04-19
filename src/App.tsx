@@ -14,6 +14,10 @@ import Recommendation from "./pages/Recommendation";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 import Admin from "./pages/Admin";
+import SchoolDashboard from "./pages/SchoolDashboard";
+import Guide from "./pages/Guide";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const queryClient = new QueryClient();
 
@@ -27,7 +31,24 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   if (!user) return <Navigate to="/auth" replace />;
   return <>{children}</>;
 };
+const EnrolledRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user } = useAuth();
+  const [allowed, setAllowed] = useState<boolean | null>(null);
 
+  useEffect(() => {
+    if (!user) return;
+    supabase.from("enrollments")
+      .select("id")
+      .eq("student_id", user.id)
+      .in("status", ["student_confirmed", "school_confirmed", "completed"])
+      .limit(1)
+      .then(({ data }) => setAllowed((data?.length ?? 0) > 0));
+  }, [user]);
+
+  if (allowed === null) return null; // loading
+  if (!allowed) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+};
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -47,6 +68,8 @@ const App = () => (
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
             <Route path="/Admin" element={<Admin />} />
+            <Route path="/school-dashboard" element={<ProtectedRoute><SchoolDashboard /></ProtectedRoute>} />
+            <Route path="/Guide" element={<ProtectedRoute><EnrolledRoute><Guide /></EnrolledRoute></ProtectedRoute>} />
           </Routes>
         </AuthProvider>
       </BrowserRouter>

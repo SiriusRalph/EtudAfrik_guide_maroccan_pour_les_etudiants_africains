@@ -57,6 +57,8 @@ const Admin = () => {
       .from("enrollments")
       .select("*, schools(name, city)")
       .order("created_at", { ascending: false });
+       console.log("enrollmentsData:", enrollmentsData); // 👈 ajoute ici
+       console.log("error:", error);   
 
     if (error) {
       console.error("enrollments error:", error);
